@@ -19,8 +19,11 @@
 #include "tf2_geometry_msgs/tf2_geometry_msgs.h"
 #include <tf2_eigen/tf2_eigen.h>
 #include <eigen3/Eigen/Dense>
+#include <opencv2/core/mat.hpp>
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/highgui.hpp>
 
-#include <charuco_ros/CharucoCornerMsg.h>
+
 
 class CharucoBoard{
 
@@ -52,14 +55,15 @@ private:
     image_transport::ImageTransport it;
     image_transport::Subscriber image_sub;
 
-    cv::Ptr<cv::aruco::CharucoBoard> board;
+    cv::Mat board;
     cv::Ptr<cv::aruco::Dictionary> dictionary;
     cv::Ptr<cv::aruco::DetectorParameters> detectorParams;
+    std::ostringstream vector_to_marker;
 
-    int x_square;
-    int y_square;
-    float square_length;
-    float marker_length;
+    int marker_id;
+    int borderBits;
+    int sidePixels;
+    float markerLengthMeters;
 
 
 public:
@@ -76,30 +80,29 @@ public:
         transform_pub = nh.advertise<geometry_msgs::TransformStamped>("transform", 100);
         pose_pub = nh.advertise<geometry_msgs::PoseStamped>("pose", 100);
 
-        nh.param<float>("marker_length", marker_length, 0.025);
-        nh.param<float>("square_length", square_length, 0.05);
-        nh.param<int>("x_square", x_square, 6);
-        nh.param<int>("y_square", y_square, 4);
-        nh.param<int>("num_marker", nMarkers, 15);
+
+
         nh.param<int>("dictionary_id", dictionary_id, 0);
-        nMarkerDetectThreshold = nMarkers/2;
+        nh.param<int>("marker_id", marker_id, 1);
+        nh.param<int>("borderBits", borderBits, 3);
+        nh.param<int>("sidePixels", sidePixels, 30);
+        nh.param<float>("markerLengthMeters", markerLengthMeters, 0.18);
 
         nh.param<bool>("draw_markers", draw_markers, true);
         nh.param<bool>("draw_axis", draw_axis, true);
         nh.param<bool>("publish_tf", publish_tf, false);
         nh.param<bool>("publish_corners", publish_corners, true);
 
-        ROS_INFO_STREAM("Initializing " <<x_square << "x" << y_square <<"ChArUco board. Aruco Marker Length " << marker_length << " Chessboard size " << square_length );
+        ROS_INFO_STREAM("Initializing dictionary id " <<dictionary_id << " marker id " << marker_id <<"Marker length "<< markerLengthMeters<<" borderBits " << borderBits << " sidePixels " << sidePixels );
 
-        if(publish_corners)
-            corner_pub = nh.advertise<charuco_ros::CharucoCornerMsg>("corner",100);
-        cv::aruco::PREDEFINED_DICTIONARY_NAME dictionaryId = cv::aruco::DICT_4X4_50; //TODO: Paul, this value is NOT the same for all the boards.
-        dictionary = cv::aruco::getPredefinedDictionary(cv::aruco::PREDEFINED_DICTIONARY_NAME(cv::aruco::DICT_4X4_1000));
+        dictionary = cv::aruco::getPredefinedDictionary(dictionary_id);
         detectorParams = cv::aruco::DetectorParameters::create();
-        board = cv::aruco::CharucoBoard::create(x_square,y_square,square_length,marker_length,dictionary);
-        detectorParams = cv::aruco::DetectorParameters::create();
+        cv::aruco::drawMarker(dictionary,marker_id,sidePixels,board,borderBits);
         detectorParams->doCornerRefinement = false;
-//        detectorParams->cornerRefinementMaxIterations = 30;
+
+        ROS_INFO_STREAM("Image of the aruco marker have been printed as ~/test.jpg" );
+        cv::imwrite("/home/prashant/test.jpg", board);
+        detectorParams->cornerRefinementMaxIterations = 30;
     }
 
     void image_callback(const sensor_msgs::ImageConstPtr& msg) {
@@ -117,58 +120,25 @@ public:
             std::vector< std::vector< cv::Point2f > > corners, rejected;
             cv::Vec3d tvec(0, 0, 1);
             cv::Vec3d rvec(0, 0, 0);
-            cv::Mat guessRotMat = (cv::Mat_<double>(3, 3) << 1, 0, 0, 0, 1, 0, 0, 0, 1);
-            cv::Rodrigues(guessRotMat, rvec);
+//            cv::Mat guessRotMat = (cv::Mat_<double>(3, 3) << 1, 0, 0, 0, 1, 0, 0, 0, 1);
+//            cv::Rodrigues(guessRotMat, rvec);
             // detect markers
             cv::aruco::detectMarkers(inImage, dictionary, corners, ids, detectorParams, rejected);
-            ROS_WARN_STREAM("Num of id " << ids.size());
 
-            if (ids.size() <= nMarkerDetectThreshold)
+            if (ids.size() < 1)
                 return;
 
-            std::vector<cv::Point2f> charucoCorners;
-            std::vector<int> charucoIds;
-
-            cv::aruco::interpolateCornersCharuco(corners, ids, inImage, board, charucoCorners, charucoIds, cameraMatrix, distortionCoeffs);
-            cv::aruco::estimatePoseCharucoBoard(charucoCorners, charucoIds, board, cameraMatrix, distortionCoeffs, rvec, tvec);
-            cv::Mat rotMat;
-            cv::Rodrigues(rvec, rotMat);
-            cv::Mat eZ = (cv::Mat_<double>(3, 1) << 0.0, 0.0, 1.0);
-            cv::Mat eZ_prime = rotMat*eZ;
-            if (tvec[2] < 0) {
-                std::cout << "cv::solvePnP converged to invalid transform translation z = " << tvec[2] <<
-                          " when, in reality we must assert, z > 0." << std::endl;
-                return;
-            }
-
-            if (publish_corners){
-                charuco_ros::CharucoCornerMsg cornerMsg;
-                charuco_ros::OneMarker PixelMsg;
-                charuco_ros::OneMarker MetricMsg;
-                cornerMsg.header = msg->header;
-                for (int i = 0; i < (int) charucoIds.size(); i++)
-                {
-                    PixelMsg.id = charucoIds[i];
-                    PixelMsg.corner.x = charucoCorners[i].x;
-                    PixelMsg.corner.y = charucoCorners[i].y;
-                    cornerMsg.pixel_corners.push_back(PixelMsg);
-
-                    MetricMsg.id = charucoIds[i];
-                    MetricMsg.corner.x = board->chessboardCorners[charucoIds[i]].x;
-                    MetricMsg.corner.y = board->chessboardCorners[charucoIds[i]].y;
-                    MetricMsg.corner.z = board->chessboardCorners[charucoIds[i]].z;
-                    cornerMsg.metric_corners.push_back(MetricMsg);
-                }
-                corner_pub.publish(cornerMsg);
-            }
+            cv::aruco::drawDetectedMarkers(inImage, corners, ids);
+            std::vector<cv::Vec3d> rvecs, tvecs;
+            cv::aruco::estimatePoseSingleMarkers(corners, markerLengthMeters,cameraMatrix, distortionCoeffs, rvecs, tvecs);
 
             Eigen::Affine3d transform_result;
-            getTF(rvec, tvec, transform_result);
+            getTF(rvecs[0], tvecs[0], transform_result);
 
             geometry_msgs::TransformStamped transform_msg;
             transform_msg = tf2::eigenToTransform(transform_result);
             transform_msg.header.stamp = msg->header.stamp;
-            transform_msg.header.frame_id = "charuco_board";
+            transform_msg.header.frame_id = "aruco_marker";
             transform_msg.child_frame_id = msg->header.frame_id;
             transform_pub.publish(transform_msg);
 
@@ -182,10 +152,10 @@ public:
 
             resultImage = cv_ptr->image.clone();
             if (draw_markers)
-                cv::aruco::drawDetectedCornersCharuco(resultImage, charucoCorners, charucoIds, cv::Scalar(255, 0, 0));
+                cv::aruco::drawDetectedMarkers(resultImage, corners);
 
             if (draw_axis)
-                cv::aruco::drawAxis(resultImage, cameraMatrix, distortionCoeffs, rvec, tvec, 2*square_length);
+                cv::aruco::drawAxis(resultImage, cameraMatrix, distortionCoeffs, rvecs, tvecs, 2*markerLengthMeters);
 
             if(draw_axis || draw_markers) {
                 if (image_pub.getNumSubscribers() > 0) {

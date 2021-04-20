@@ -15,7 +15,6 @@
 
     <group if="$(arg driver_realsense)">
         <include file="$(find realsense2_camera)/launch/rs_camera.launch"/>
-        <arg name="camera_info" default="file://$(env HOME)/.ros/camera_info.yaml"/>
     </group>
 
     <arg name="result_display" default="true"/>
@@ -25,13 +24,12 @@
     <arg name="publish_corners" default="false" />
     <arg name="publish_tf" default="true" />
     <!--    Size of the aruco Square-->
-    <arg name="marker_length" default="0.0408" />
     <!--    Size of the checkboard square-->
-    <arg name="square_length" default="0.060" />
-    <arg name="x_square" default="4" />
-    <arg name="y_square" default="4" />
-    <arg name="num_marker" default="9" />
     <arg name="dictionary_id" default="0" />
+    <arg name="marker_id" default="4" />
+    <arg name="borderBits" default="1" />
+    <arg name="sidePixels" default="36" />
+    <arg name="markerLengthMeters" default="0.180" />
 
     <node ns="/" pkg="charuco_ros" type="node" name="charuco_node" output="screen">
         <remap from="/camera_info" to="/camera/rgb/camera_info" if="$(arg driver_astra)"/>
@@ -44,12 +42,11 @@
         <param name="draw_axis" type="bool" value="$(arg result_draw_axis)" />
         <param name="publish_tf" value="$(arg publish_tf)" />
         <param name="publish_corners" value="$(arg publish_corners)" />
-        <param name="marker_length" value="$(arg marker_length)" />
-        <param name="square_length" value="$(arg square_length)" />
-        <param name="x_square" value="$(arg x_square)" />
-        <param name="y_square" value="$(arg y_square)" />
-        <param name="num_marker" value="$(arg num_marker)" />
         <param name="dictionary_id" value="$(arg dictionary_id)" />
+        <param name="marker_id" value="$(arg marker_id)" />
+        <param name="borderBits" value="$(arg borderBits)" />
+        <param name="sidePixels" value="$(arg sidePixels)" />
+        <param name="markerLengthMeters" value="$(arg markerLengthMeters)" />
     </node>
 
     <group if="$(arg result_display)">
